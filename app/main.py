@@ -1,89 +1,58 @@
-"""FastAPI application exposing an MPP-paid Tempo transaction preflight."""
+"""MPP-paid Tempo lottery API."""
 
 from __future__ import annotations
 
-import os
-from typing import Any
+from dataclasses import asdict
+from datetime import UTC, datetime
 
-import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from mpp import Challenge
 from mpp.methods.tempo import ChargeIntent, tempo
 from mpp.server import Mpp
-from pydantic import BaseModel, Field, field_validator
 
-from app.analyzer import decode_call, risk_assessment
+from app.config import (
+    CHAIN_ID,
+    TICKET_PRICE,
+    TICKET_PRICE_BASE_UNITS,
+    USDC_DECIMALS,
+    ZERO_ADDRESS,
+    settings,
+)
+from app.lottery import next_period_end, payer_address
+from app.store import LotteryStore
 
-CHAIN_ID = 4217
-PRICE_USDC = "0.01"
-USDC_E = "0x20C000000000000000000000b9537d11c60E8b50"
-ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
-
-RPC_URL = os.getenv("TEMPO_RPC_URL", "https://rpc.tempo.xyz")
-PAYMENT_DESTINATION = os.getenv("PAYMENT_DESTINATION", ZERO_ADDRESS)
-PAYMENT_CURRENCY = os.getenv("PAYMENT_CURRENCY", USDC_E)
-
+store = LotteryStore(settings.database_path)
 payment_server = Mpp.create(
     method=tempo(
         chain_id=CHAIN_ID,
-        currency=PAYMENT_CURRENCY,
-        recipient=PAYMENT_DESTINATION,
+        currency=settings.payment_currency,
+        recipient=settings.payment_destination,
         intents={"charge": ChargeIntent()},
     )
 )
 
 app = FastAPI(
-    title="Tempo Preflight API",
-    version="0.1.0",
-    description="Payment-gated, read-only transaction simulation and risk analysis for Tempo.",
+    title="Tempo Weekly Lottery API",
+    version="1.0.0",
+    description="One 0.05 USDC.e ticket per MPP-paid request; weekly verifiable draw.",
 )
 
 
-class TransactionInput(BaseModel):
-    sender: str = Field(alias="from")
-    to: str
-    value: str = "0x0"
-    data: str = "0x"
-
-    model_config = {"populate_by_name": True}
-
-    @field_validator("sender", "to")
-    @classmethod
-    def validate_address(cls, value: str) -> str:
-        if not value.startswith("0x") or len(value) != 42:
-            raise ValueError("must be a 20-byte 0x-prefixed address")
-        int(value[2:], 16)
-        return value
-
-    @field_validator("value", "data")
-    @classmethod
-    def validate_hex(cls, value: str) -> str:
-        if not value.startswith("0x"):
-            raise ValueError("must be 0x-prefixed hex")
-        int(value[2:] or "0", 16)
-        return value
-
-
-async def rpc(method: str, params: list[Any]) -> Any:
-    async with httpx.AsyncClient(timeout=12.0) as client:
-        response = await client.post(
-            RPC_URL,
-            json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
-        )
-        response.raise_for_status()
-        payload = response.json()
-    if "error" in payload:
-        raise RuntimeError(payload["error"].get("message", "Tempo RPC error"))
-    return payload["result"]
+def amount(value: int) -> str:
+    return f"{value / 10**USDC_DECIMALS:.{USDC_DECIMALS}f}"
 
 
 @app.get("/")
 async def index():
     return {
-        "service": "Tempo Preflight API",
-        "price": f"{PRICE_USDC} USDC.e per analysis",
-        "paid_endpoint": "POST /v1/transaction/preflight",
+        "service": "Tempo Weekly Lottery",
+        "enabled": settings.lottery_enabled,
+        "ticket_price": f"{TICKET_PRICE} USDC.e",
+        "payout": f"{settings.payout_bps / 100:.2f}% of each weekly pool",
+        "paid_endpoint": "POST /v1/lottery/enter",
+        "status_endpoint": "GET /v1/lottery/status",
+        "draws_endpoint": "GET /v1/lottery/draws",
         "docs": "/docs",
     }
 
@@ -93,9 +62,35 @@ async def health():
     return {"status": "ok", "chain_id": CHAIN_ID}
 
 
-@app.post("/v1/transaction/preflight")
-async def preflight(transaction: TransactionInput, request: Request):
-    if PAYMENT_DESTINATION == ZERO_ADDRESS:
+@app.get("/v1/lottery/status")
+async def lottery_status():
+    now = int(datetime.now(UTC).timestamp())
+    period_end = next_period_end(now, settings.draw_weekday_utc, settings.draw_hour_utc)
+    stats = store.period_stats(period_end)
+    return {
+        "period_end": period_end,
+        "period_end_iso": datetime.fromtimestamp(period_end, UTC).isoformat(),
+        "ticket_price": TICKET_PRICE,
+        "ticket_count": stats["ticket_count"],
+        "pool": amount(stats["pool_amount"]),
+        "projected_payout": amount(stats["pool_amount"] * settings.payout_bps // 10_000),
+        "currency": "USDC.e",
+    }
+
+
+@app.get("/v1/lottery/draws")
+async def lottery_draws():
+    return {"draws": [draw.as_dict() for draw in store.latest_draws()]}
+
+
+@app.post("/v1/lottery/enter")
+async def enter_lottery(request: Request):
+    if not settings.lottery_enabled:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "Lottery is not enabled"},
+        )
+    if settings.payment_destination == ZERO_ADDRESS:
         return JSONResponse(
             status_code=503,
             content={"error": "PAYMENT_DESTINATION is not configured"},
@@ -103,73 +98,41 @@ async def preflight(transaction: TransactionInput, request: Request):
 
     payment = await payment_server.charge(
         authorization=request.headers.get("Authorization"),
-        amount=PRICE_USDC,
+        amount=TICKET_PRICE,
         chain_id=CHAIN_ID,
     )
     if isinstance(payment, Challenge):
         return JSONResponse(
             status_code=402,
-            content={"error": "Payment required", "price": PRICE_USDC, "currency": "USDC.e"},
+            content={"error": "Payment required", "price": TICKET_PRICE, "currency": "USDC.e"},
             headers={"WWW-Authenticate": payment.to_www_authenticate(payment_server.realm)},
         )
 
     credential, receipt = payment
-    tx = transaction.model_dump(by_alias=True)
-    decoded = decode_call(transaction.data)
-
+    now = int(datetime.now(UTC).timestamp())
+    period_end = next_period_end(now, settings.draw_weekday_utc, settings.draw_hour_utc)
     try:
-        chain_hex, block_hex, code = await _rpc_context(transaction.to)
-        actual_chain_id = int(chain_hex, 16)
-        if actual_chain_id != CHAIN_ID:
-            raise RuntimeError(f"RPC returned chain {actual_chain_id}, expected {CHAIN_ID}")
+        payer = payer_address(credential.source)
+        ticket, created = store.add_ticket(
+            period_end=period_end,
+            payer=payer,
+            payment_tx=receipt.reference,
+            amount=TICKET_PRICE_BASE_UNITS,
+            created_at=now,
+        )
+    except ValueError as exc:
+        return JSONResponse(
+            status_code=500,
+            content={"error": "verified payment could not be recorded", "detail": str(exc)},
+        )
 
-        estimate_result, call_result = await _simulate(tx)
-        simulation_ok = call_result[0]
-        target_is_contract = code not in ("0x", "0x0", None)
-        verdict, warnings = risk_assessment(decoded, simulation_ok, target_is_contract)
-        result = {
-            "verdict": verdict,
-            "warnings": warnings,
-            "simulation": {
-                "success": simulation_ok,
-                "return_data": call_result[1] if simulation_ok else None,
-                "error": None if simulation_ok else call_result[1],
-                "estimated_gas": int(estimate_result[1], 16) if estimate_result[0] else None,
-                "gas_error": None if estimate_result[0] else estimate_result[1],
-            },
-            "target": {"address": transaction.to, "is_contract": target_is_contract},
-            "decoded_call": (
-                {"function": decoded.function, "arguments": decoded.arguments} if decoded else None
-            ),
-            "chain": {"id": actual_chain_id, "block_number": int(block_hex, 16)},
-            "payment": {"payer": credential.source, "reference": receipt.reference, "amount": PRICE_USDC},
-            "disclaimer": "Heuristic analysis only; a safe verdict is not a security guarantee.",
-        }
-        return JSONResponse(content=result, headers={"Payment-Receipt": receipt.to_payment_receipt()})
-    except (httpx.HTTPError, RuntimeError, ValueError) as exc:
-        return JSONResponse(status_code=502, content={"error": "Tempo RPC analysis failed", "detail": str(exc)})
-
-
-async def _rpc_context(target: str) -> tuple[str, str, str]:
-    import asyncio
-
-    chain, block, code = await asyncio.gather(
-        rpc("eth_chainId", []),
-        rpc("eth_blockNumber", []),
-        rpc("eth_getCode", [target, "latest"]),
+    response = {
+        "ticket": asdict(ticket),
+        "created": created,
+        "period_end_iso": datetime.fromtimestamp(period_end, UTC).isoformat(),
+        "payment": {"payer": payer, "reference": receipt.reference, "amount": TICKET_PRICE},
+    }
+    return JSONResponse(
+        content=response,
+        headers={"Payment-Receipt": receipt.to_payment_receipt()},
     )
-    return chain, block, code
-
-
-async def _simulate(tx: dict[str, str]) -> tuple[tuple[bool, str], tuple[bool, str]]:
-    import asyncio
-
-    async def capture(method: str) -> tuple[bool, str]:
-        try:
-            return True, await rpc(method, [tx, "latest"])
-        except (httpx.HTTPError, RuntimeError, ValueError) as exc:
-            return False, str(exc)
-
-    estimate, call = await asyncio.gather(capture("eth_estimateGas"), capture("eth_call"))
-    return estimate, call
-

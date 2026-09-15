@@ -2,13 +2,23 @@ services:
   app:
     build: .
     restart: unless-stopped
-    env_file:
-      - .env
+    env_file: .env
     environment:
       PORT: "8000"
     expose:
       - "8000"
-    # No host port mapping: the app is only reachable through nginx.
+    volumes:
+      - lottery-data:/app/data
+
+  scheduler:
+    build: .
+    restart: unless-stopped
+    command: ["python", "-m", "app.scheduler"]
+    env_file: .env
+    volumes:
+      - lottery-data:/app/data
+    depends_on:
+      - app
 
   nginx:
     image: nginx:1.27-alpine
@@ -19,9 +29,6 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      # Long syntax with create_host_path disabled: if a source is missing,
-      # compose fails with a clear error instead of silently creating an empty
-      # directory that then cannot be mounted onto a file.
       - type: bind
         source: ./nginx/nginx.conf
         target: /etc/nginx/nginx.conf
@@ -43,4 +50,5 @@ services:
       - certbot-webroot:/var/www/certbot
 
 volumes:
+  lottery-data:
   certbot-webroot:

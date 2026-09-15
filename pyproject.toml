@@ -1,7 +1,7 @@
 [project]
-name = "tempo-preflight-api"
-version = "0.1.0"
-description = "MPP-paid transaction preflight analysis for Tempo wallets"
+name = "tempo-lottery-api"
+version = "1.0.0"
+description = "MPP-paid weekly lottery for Tempo wallets"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -9,7 +9,9 @@ dependencies = [
     "httpx>=0.28,<1",
     "pydantic-settings>=2.7,<3",
     "pympp[server,tempo]>=0.4,<1",
+    "pytempo>=0.5,<1",
     "uvicorn[standard]>=0.34,<1",
+    "web3>=7.13,<8",
 ]
 
 [dependency-groups]
@@ -21,4 +23,3 @@ dev = [
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
-
