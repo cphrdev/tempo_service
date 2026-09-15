@@ -19,9 +19,27 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/conf.d:/etc/nginx/conf.d:ro
-      - ./nginx/certs:/etc/nginx/certs:ro
+      # Long syntax with create_host_path disabled: if a source is missing,
+      # compose fails with a clear error instead of silently creating an empty
+      # directory that then cannot be mounted onto a file.
+      - type: bind
+        source: ./nginx/nginx.conf
+        target: /etc/nginx/nginx.conf
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./nginx/conf.d
+        target: /etc/nginx/conf.d
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./nginx/certs
+        target: /etc/nginx/certs
+        read_only: true
+        bind:
+          create_host_path: false
       - certbot-webroot:/var/www/certbot
 
 volumes:
