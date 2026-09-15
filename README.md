@@ -58,6 +58,38 @@ curl -i -X POST http://localhost:8000/v1/transaction/preflight \
   -d '{"from":"0x1111111111111111111111111111111111111111","to":"0x2222222222222222222222222222222222222222"}'
 ```
 
+## Run behind nginx over HTTPS
+
+`docker-compose.yml` runs the FastAPI app together with an nginx front end that
+terminates TLS on port 443 and proxies to uvicorn on port 8000. Port 80 only
+serves ACME challenges and redirects to HTTPS; the app port is never published
+to the host.
+
+```bash
+cp .env.example .env          # fill PAYMENT_DESTINATION and MPP_SECRET_KEY
+./scripts/generate-self-signed-cert.sh localhost
+docker compose up --build
+```
+
+```bash
+curl -k https://localhost/health
+```
+
+`-k` is only needed for the self-signed development certificate. Set
+`MPP_REALM` in `.env` to the public hostname (for example `api.example.com`)
+so MPP challenges advertise the right realm — the port-8000 default in
+`.env.example` is for running uvicorn directly.
+
+For a real deployment, drop a certificate and key into `nginx/certs` as
+`fullchain.pem` and `privkey.pem` (Let's Encrypt writes exactly those names),
+and set `server_name` in [nginx/conf.d/default.conf](nginx/conf.d/default.conf)
+to your domain instead of the `_` catch-all. Certificates in that directory are
+gitignored. Reload nginx after a renewal:
+
+```bash
+docker compose exec nginx nginx -s reload
+```
+
 ## Test
 
 ```bash
