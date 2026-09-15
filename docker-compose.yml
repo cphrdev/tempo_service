@@ -42,5 +42,22 @@ services:
           create_host_path: false
       - certbot-webroot:/var/www/certbot
 
+  # Run on demand only (docker compose run --rm certbot ...), never on `up`.
+  # scripts/issue-letsencrypt-cert.sh and renew-letsencrypt-cert.sh drive it.
+  certbot:
+    image: certbot/certbot:latest
+    profiles:
+      - certs
+    volumes:
+      - certbot-webroot:/var/www/certbot
+      - certbot-conf:/etc/letsencrypt
+      # Writable: certbot copies issued certs to where nginx reads them.
+      - type: bind
+        source: ./nginx/certs
+        target: /etc/nginx/certs
+        bind:
+          create_host_path: false
+
 volumes:
   certbot-webroot:
+  certbot-conf:

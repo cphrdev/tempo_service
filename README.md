@@ -80,11 +80,48 @@ curl -k https://localhost/health
 so MPP challenges advertise the right realm — the port-8000 default in
 `.env.example` is for running uvicorn directly.
 
-For a real deployment, drop a certificate and key into `nginx/certs` as
-`fullchain.pem` and `privkey.pem` (Let's Encrypt writes exactly those names),
-and set `server_name` in [nginx/conf.d/default.conf](nginx/conf.d/default.conf)
-to your domain instead of the `_` catch-all. Certificates in that directory are
-gitignored. Reload nginx after a renewal:
+The self-signed certificate makes browsers show a "not secure" warning. That is
+expected — the connection is encrypted, but no certificate authority vouches for
+it. Use it for local development only.
+
+### Trusted certificates in production
+
+Browsers stop warning once a real certificate authority issues the certificate.
+`scripts/issue-letsencrypt-cert.sh` does this via Let's Encrypt, using the ACME
+challenge path nginx already serves on port 80.
+
+Prerequisites: a domain whose DNS points at the server (Let's Encrypt cannot
+issue for a bare IP address), port 80 open to the internet, and the stack
+running. nginx needs some certificate just to start, so generate a self-signed
+one first on a fresh server, then replace it:
+
+```bash
+./scripts/generate-self-signed-cert.sh api.example.com
+```
+
+```bash
+docker compose up -d --build
+```
+
+```bash
+./scripts/issue-letsencrypt-cert.sh api.example.com you@example.com
+```
+
+That obtains the certificate, installs it as `nginx/certs/fullchain.pem` and
+`privkey.pem`, and reloads nginx. Running it accepts the Let's Encrypt Terms of
+Service. Also set `server_name` in
+[nginx/conf.d/default.conf](nginx/conf.d/default.conf) to your domain instead of
+the `_` catch-all.
+
+Certificates expire after 90 days. Schedule renewal in root's crontab:
+
+```bash
+17 3,15 * * * /root/projects/tempo_service/scripts/renew-letsencrypt-cert.sh api.example.com >> /var/log/certbot-renew.log 2>&1
+```
+
+Certbot only acts within 30 days of expiry, so running it twice daily is
+harmless. Certificates and keys in `nginx/certs` are gitignored. To reload nginx
+by hand after replacing a certificate:
 
 ```bash
 docker compose exec nginx nginx -s reload
