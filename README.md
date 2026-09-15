@@ -1,84 +1,121 @@
-# Tempo Preflight API
+# Tempo Weekly Lottery API
 
-A read-only transaction simulation and risk-analysis API paid per request through the
-[Machine Payments Protocol](https://mpp.dev). Each successful call costs **0.01 USDC.e**
-on Tempo mainnet and sends payment directly to the configured recipient address.
+An MPP-native weekly lottery for Tempo wallets. Every successful call to
+`POST /v1/lottery/enter` costs **0.05 USDC.e** and creates one ticket for the
+verified payer address. At the configured weekly cutoff, one ticket wins 90% of
+that period's pool; 10% remains in the service wallet.
 
-The service never asks for a private key and never broadcasts the submitted transaction.
+> **Legal warning:** a paid entry, random winner, and cash prize can constitute a
+> regulated lottery or gambling product. Do not operate this publicly or accept
+> mainnet funds until qualified counsel confirms that it is lawful in every
+> jurisdiction served and that licensing, age/geolocation, AML, sanctions,
+> consumer-protection, tax, and responsible-gaming obligations are satisfied.
 
-## What it analyzes
+## API
 
-- `eth_call` simulation and revert detection
-- Gas estimation
-- Whether the target is a contract
-- ERC-20 `transfer`, `approve`, and `transferFrom` calldata
-- `setApprovalForAll` calldata
-- Unlimited allowances and unknown contract calls
-- A machine-readable `safe`, `warning`, or `dangerous` verdict
+- `POST /v1/lottery/enter` — one MPP-paid ticket (`0.05 USDC.e`)
+- `GET /v1/lottery/status` — current close time, ticket count, pool, projected prize
+- `GET /v1/lottery/draws` — public draw and payout audit trail
+- `GET /health` — free health check
+- `GET /docs` — OpenAPI UI
 
-This is heuristic analysis, not a security audit or guarantee.
+Example entry:
 
-## Run locally
+```bash
+TEMPO_MAX_SPEND=0.05 tempo request -X POST \
+  https://YOUR_DOMAIN/v1/lottery/enter
+```
 
-Requirements: Python 3.12+ and [uv](https://docs.astral.sh/uv/).
+The MPP payer address becomes the entrant and potential payout address. No JSON
+body is required.
+
+## Draw integrity
+
+The default cutoff is Sunday at 20:00 UTC. It is configurable with
+`DRAW_WEEKDAY_UTC` (`Monday=0`, `Sunday=6`) and `DRAW_HOUR_UTC`.
+
+For a closed period, the scheduler:
+
+1. Loads every unique verified MPP payment receipt recorded for that period.
+2. Uses the hash of the first Tempo block at or after the published cutoff.
+3. Sorts ticket payment transaction hashes.
+4. Computes `SHA-256("tempo-lottery-v1|cutoff|block-hash|ticket-hashes...")`.
+5. Converts the seed to an integer and takes modulo ticket count.
+6. Transfers `floor(pool × 9000 / 10000)` USDC.e to the selected payer.
+
+The draw endpoint exposes the block, hash, seed, winning ticket, pool, and payout
+transaction so anyone can reproduce the selection.
+
+SQLite enforces one ticket per payment transaction and one draw per period. Once
+a draw is selected, the scheduler will not automatically retry it after a payout
+error; this prevents a crash around broadcast time from paying twice. An operator
+must reconcile the on-chain state before handling a failed draw.
+
+## Wallet requirements
+
+Use a new dedicated low-balance service wallet:
+
+- `PAYMENT_DESTINATION` is its public address and receives ticket payments.
+- `LOTTERY_PAYOUT_PRIVATE_KEY` signs the weekly prize transfer.
+- The two values must refer to the same secp256k1 account.
+- A passkey-only Tempo wallet cannot perform unattended server payouts with this implementation.
+- Never use a personal or high-value wallet and never commit the key.
+
+`MPP_SECRET_KEY` signs MPP challenges; it is not a wallet key. Generate it with:
+
+```bash
+openssl rand -hex 32
+```
+
+## Local setup
 
 ```bash
 cp .env.example .env
-# Fill PAYMENT_DESTINATION and MPP_SECRET_KEY, then:
-set -a; source .env; set +a
-uv sync
+# Fill the three secret/account values in .env.
+# Keep LOTTERY_ENABLED=false during setup.
+uv sync --dev
+uv run pytest
 uv run uvicorn app.main:app --reload
 ```
 
-Free checks:
+Confirm the unpaid request advertises exactly `50000` base units (`0.05 USDC.e`):
 
 ```bash
-curl http://localhost:8000/health
-curl http://localhost:8000/
+curl -i -X POST http://localhost:8000/v1/lottery/enter
 ```
 
-Paid call with Tempo Wallet CLI:
+Inspect the current pool:
 
 ```bash
-TEMPO_MAX_SPEND=0.01 tempo request -X POST \
-  http://localhost:8000/v1/transaction/preflight \
-  --json '{
-    "from":"0x1111111111111111111111111111111111111111",
-    "to":"0x2222222222222222222222222222222222222222",
-    "value":"0x0",
-    "data":"0x"
-  }'
+curl http://localhost:8000/v1/lottery/status
 ```
 
-First verify the 402 challenge without paying:
+Test selection without writing a draw or paying:
 
 ```bash
-curl -i -X POST http://localhost:8000/v1/transaction/preflight \
-  -H 'content-type: application/json' \
-  -d '{"from":"0x1111111111111111111111111111111111111111","to":"0x2222222222222222222222222222222222222222"}'
+uv run python -m app.draw --dry-run
 ```
 
 ## Run behind nginx over HTTPS
 
-`docker-compose.yml` runs the FastAPI app together with an nginx front end that
-terminates TLS on port 443 and proxies to uvicorn on port 8000. Port 80 only
-serves ACME challenges and redirects to HTTPS; the app port is never published
-to the host.
+Docker Compose runs the API, the single draw scheduler, and nginx. Nginx exposes
+ports 80/443; the application remains private on the Compose network. The API
+and scheduler share the persistent `lottery-data` volume.
+
+For a local HTTPS test, generate a temporary self-signed certificate:
 
 ```bash
-cp .env.example .env          # fill PAYMENT_DESTINATION and MPP_SECRET_KEY
+cp .env.example .env
+# Fill PAYMENT_DESTINATION, MPP_SECRET_KEY, and LOTTERY_PAYOUT_PRIVATE_KEY.
 ./scripts/generate-self-signed-cert.sh localhost
-docker compose up --build
-```
-
-```bash
+docker compose up -d --build
 curl -k https://localhost/health
 ```
 
-`-k` is only needed for the self-signed development certificate. Set
-`MPP_REALM` in `.env` to the public hostname (for example `api.example.com`)
-so MPP challenges advertise the right realm — the port-8000 default in
-`.env.example` is for running uvicorn directly.
+`-k` is only for the self-signed development certificate. For production, put
+the real certificate and key in `nginx/certs/fullchain.pem` and
+`nginx/certs/privkey.pem`, change `server_name` in
+`nginx/conf.d/default.conf`, and set `MPP_REALM` to the public hostname.
 
 The self-signed certificate makes browsers show a "not secure" warning. That is
 expected — the connection is encrypted, but no certificate authority vouches for
@@ -127,39 +164,32 @@ by hand after replacing a certificate:
 docker compose exec nginx nginx -s reload
 ```
 
-## Test
+## VPS deployment
+
+Install Docker and Docker Compose, clone this repository, create `.env`, install
+the TLS certificate described above, then:
 
 ```bash
-uv sync --dev
-uv run pytest
+docker compose up -d --build
+docker compose logs -f app scheduler nginx
 ```
 
-## Deploy on Render
+The named Docker volume `lottery-data` stores the ticket/draw database. Back it
+up regularly; losing it loses the ticket ledger. Run exactly one scheduler.
 
-1. Push this repository to GitHub.
-2. In Render, create a Blueprint from the repository; `render.yaml` defines the service.
-3. Set `PAYMENT_DESTINATION` to the Tempo address that should receive revenue.
-4. Render generates `MPP_SECRET_KEY`; never expose or commit it.
-5. After deployment, set `MPP_REALM` to the deployed hostname if it is not detected.
-6. Check `/health`, inspect a raw 402 response, run `tempo request --dry-run`, and only
-   then make a real request with `TEMPO_MAX_SPEND=0.01`.
+Before enabling public access:
 
-## Publish to the MPP ecosystem
+1. Obtain legal approval and implement required jurisdiction/age restrictions.
+2. Test end-to-end on a non-production environment with disposable funds.
+3. Confirm the service wallet can make a TIP-20 transfer and pay its network fee.
+4. Confirm a raw request returns a 402 challenge for `0.05 USDC.e` on chain 4217.
+5. Make one real capped entry and verify it appears in `/v1/lottery/status`.
+6. Back up the persistent volume and configure monitoring/alerts.
+7. Publish official rules, eligibility, refund/failure policy, privacy policy, and support contact.
 
-Once the production endpoint is stable and accepts real payments:
+Set `LOTTERY_ENABLED=true` only after completing the checklist. With its default
+value of `false`, the API returns `503` and cannot accept paid entries.
 
-1. Add an OpenAPI URL (`https://YOUR_HOST/openapi.json`) to your service documentation.
-2. Register the live service with [MPPScan](https://www.mppscan.com/).
-3. Submit it to the curated [MPP service directory](https://mpp.dev/services). The directory
-   requires a live, production-ready service and reviews usefulness and novelty.
-
-## Production checklist
-
-- Use a dedicated receiving wallet, not a personal high-value wallet.
-- Pin dependency versions after the first verified deployment.
-- Add persistent request/payment audit logs without storing submitted calldata indefinitely.
-- Add rate limiting and abuse controls before public promotion.
-- Configure uptime monitoring and RPC failover.
-- Publish terms, privacy policy, and a support contact.
-- Have a recovery/refund policy for paid calls that fail because the RPC provider is unavailable.
-
+Only after the live service is stable should it be registered with
+[MPPScan](https://www.mppscan.com/) or submitted to the
+[MPP service directory](https://mpp.dev/services).
