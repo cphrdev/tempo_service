@@ -34,6 +34,8 @@ body is required.
 The default cutoff is Sunday at 20:00:00 UTC. It is configurable with
 `DRAW_WEEKDAY_UTC` (`Monday=0`, `Sunday=6`), `DRAW_HOUR_UTC`,
 `DRAW_MINUTE_UTC`, and `DRAW_SECOND_UTC`. The scheduler checks once per second.
+`PAYOUT_GAS_LIMIT` defaults to `350000`, leaving headroom above the current
+TIP-20 transfer estimate.
 
 For a closed period, the scheduler:
 

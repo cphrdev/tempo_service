@@ -39,6 +39,7 @@ class Settings:
     draw_minute_utc: int = _integer("DRAW_MINUTE_UTC", 0, 0, 59)
     draw_second_utc: int = _integer("DRAW_SECOND_UTC", 0, 0, 59)
     draw_trigger_window_seconds: int = _integer("DRAW_TRIGGER_WINDOW_SECONDS", 60, 1, 300)
+    payout_gas_limit: int = _integer("PAYOUT_GAS_LIMIT", 350_000, 100_000, 1_000_000)
     payout_bps: int = _integer("PAYOUT_BPS", 9000, 1, 10_000)
     lottery_enabled: bool = _boolean("LOTTERY_ENABLED")
 

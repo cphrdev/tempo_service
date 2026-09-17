@@ -9,7 +9,7 @@ from pytempo import TempoTransaction
 from pytempo.contracts import TIP20
 from web3 import Web3
 
-from app.config import CHAIN_ID, USDC_E
+from app.config import CHAIN_ID, USDC_E, settings
 
 
 def send_payout(*, rpc_url: str, expected_sender: str, winner: str, amount: int) -> str:
@@ -34,7 +34,9 @@ def send_payout(*, rpc_url: str, expected_sender: str, winner: str, amount: int)
     gas_price = int(w3.eth.gas_price)
     transaction = TempoTransaction.create(
         chain_id=CHAIN_ID,
-        gas_limit=100_000,
+        # A TIP-20 transfer currently costs about 271,596 gas on Tempo.
+        # Leave headroom for protocol changes while allowing an operator override.
+        gas_limit=settings.payout_gas_limit,
         max_fee_per_gas=max(gas_price * 2, 1),
         max_priority_fee_per_gas=gas_price,
         nonce=nonce,
