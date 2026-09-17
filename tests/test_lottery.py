@@ -7,6 +7,12 @@ def test_next_period_end_is_strictly_future():
     assert next_period_end(sunday_20_utc, 6, 20) == sunday_20_utc + 7 * 24 * 60 * 60
 
 
+def test_next_period_end_honors_minutes_and_seconds():
+    sunday_20_utc = 1_789_329_600
+    assert next_period_end(sunday_20_utc, 6, 20, 15, 30) == sunday_20_utc + 930
+    assert next_period_end(sunday_20_utc + 930, 6, 20, 15, 30) == sunday_20_utc + 7 * 24 * 60 * 60 + 930
+
+
 def test_payer_address_accepts_did():
     address = "0x12F926EFfC5397bd60991862FAB5F3179EC9db28"
     assert payer_address(f"did:pkh:eip155:4217:{address}") == address.lower()

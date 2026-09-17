@@ -31,8 +31,9 @@ body is required.
 
 ## Draw integrity
 
-The default cutoff is Sunday at 20:00 UTC. It is configurable with
-`DRAW_WEEKDAY_UTC` (`Monday=0`, `Sunday=6`) and `DRAW_HOUR_UTC`.
+The default cutoff is Sunday at 20:00:00 UTC. It is configurable with
+`DRAW_WEEKDAY_UTC` (`Monday=0`, `Sunday=6`), `DRAW_HOUR_UTC`,
+`DRAW_MINUTE_UTC`, and `DRAW_SECOND_UTC`. The scheduler checks once per second.
 
 For a closed period, the scheduler:
 
@@ -175,7 +176,8 @@ docker compose logs -f app scheduler nginx
 ```
 
 The named Docker volume `lottery-data` stores the ticket/draw database. Back it
-up regularly; losing it loses the ticket ledger. Run exactly one scheduler.
+up regularly; losing it loses the ticket ledger. Scheduler logs are retained in
+`./logs/lottery.log` on the host and rotate daily (30 backups). Run exactly one scheduler.
 
 Before enabling public access:
 

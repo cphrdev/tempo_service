@@ -33,8 +33,11 @@ class Settings:
     payment_destination: str = os.getenv("PAYMENT_DESTINATION", ZERO_ADDRESS)
     payment_currency: str = os.getenv("PAYMENT_CURRENCY", USDC_E)
     database_path: str = os.getenv("LOTTERY_DATABASE_PATH", "data/lottery.db")
+    log_path: str = os.getenv("LOTTERY_LOG_PATH", "logs/lottery.log")
     draw_weekday_utc: int = _integer("DRAW_WEEKDAY_UTC", 6, 0, 6)
     draw_hour_utc: int = _integer("DRAW_HOUR_UTC", 20, 0, 23)
+    draw_minute_utc: int = _integer("DRAW_MINUTE_UTC", 0, 0, 59)
+    draw_second_utc: int = _integer("DRAW_SECOND_UTC", 0, 0, 59)
     payout_bps: int = _integer("PAYOUT_BPS", 9000, 1, 10_000)
     lottery_enabled: bool = _boolean("LOTTERY_ENABLED")
 

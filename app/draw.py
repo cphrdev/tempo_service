@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 from datetime import UTC, datetime
 
 from app.config import TICKET_PRICE_BASE_UNITS, ZERO_ADDRESS, settings
@@ -13,13 +14,16 @@ from app.payout import send_payout
 from app.rpc import TempoRpc
 from app.store import LotteryStore
 
+logger = logging.getLogger(__name__)
+
 
 async def run_draw(now: int | None = None, *, dry_run: bool = False) -> dict:
     if not settings.lottery_enabled and not dry_run:
         return {"action": "skipped", "reason": "lottery is not enabled"}
-    current = now or int(datetime.now(UTC).timestamp())
+    current = now if now is not None else int(datetime.now(UTC).timestamp())
     period_end = previous_period_end(
-        current + 1, settings.draw_weekday_utc, settings.draw_hour_utc
+        current + 1, settings.draw_weekday_utc, settings.draw_hour_utc,
+        settings.draw_minute_utc, settings.draw_second_utc,
     )
     store = LotteryStore(settings.database_path)
     existing = next(
@@ -73,6 +77,7 @@ async def run_draw(now: int | None = None, *, dry_run: bool = False) -> dict:
         return {"action": "skipped", "reason": "draw claimed by another worker", "draw": draw.as_dict()}
 
     try:
+        logger.info("payout started period_end=%s winner=%s amount=%s tickets=%s", period_end, winner_ticket.payer, payout, len(tickets))
         payout_tx = await asyncio.to_thread(
             send_payout,
             rpc_url=settings.rpc_url,
@@ -81,10 +86,12 @@ async def run_draw(now: int | None = None, *, dry_run: bool = False) -> dict:
             amount=payout,
         )
     except Exception as exc:
+        logger.exception("payout failed period_end=%s winner=%s", period_end, winner_ticket.payer)
         failed = store.mark_failed(period_end, str(exc))
         return {"action": "failed", "draw": failed.as_dict()}
 
     paid = store.mark_paid(period_end, payout_tx)
+    logger.info("payout confirmed period_end=%s payout_tx=%s", period_end, payout_tx)
     return {"action": "paid", "draw": paid.as_dict()}
 
 

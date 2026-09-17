@@ -9,6 +9,9 @@ services:
       - "8000"
     volumes:
       - lottery-data:/app/data
+      - type: bind
+        source: ./logs
+        target: /app/logs
 
   scheduler:
     build: .
@@ -17,6 +20,9 @@ services:
     env_file: .env
     volumes:
       - lottery-data:/app/data
+      - type: bind
+        source: ./logs
+        target: /app/logs
     depends_on:
       - app
 

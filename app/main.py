@@ -65,7 +65,10 @@ async def health():
 @app.get("/v1/lottery/status")
 async def lottery_status():
     now = int(datetime.now(UTC).timestamp())
-    period_end = next_period_end(now, settings.draw_weekday_utc, settings.draw_hour_utc)
+    period_end = next_period_end(
+        now, settings.draw_weekday_utc, settings.draw_hour_utc,
+        settings.draw_minute_utc, settings.draw_second_utc,
+    )
     stats = store.period_stats(period_end)
     return {
         "period_end": period_end,
@@ -110,7 +113,10 @@ async def enter_lottery(request: Request):
 
     credential, receipt = payment
     now = int(datetime.now(UTC).timestamp())
-    period_end = next_period_end(now, settings.draw_weekday_utc, settings.draw_hour_utc)
+    period_end = next_period_end(
+        now, settings.draw_weekday_utc, settings.draw_hour_utc,
+        settings.draw_minute_utc, settings.draw_second_utc,
+    )
     try:
         payer = payer_address(credential.source)
         ticket, created = store.add_ticket(

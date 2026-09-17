@@ -6,4 +6,6 @@ __pycache__/
 .pytest_cache/
 *.pyc
 data/
+logs/*
+!logs/.gitkeep
 nginx/certs/*.pem
