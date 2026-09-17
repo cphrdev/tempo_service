@@ -38,6 +38,7 @@ class Settings:
     draw_hour_utc: int = _integer("DRAW_HOUR_UTC", 20, 0, 23)
     draw_minute_utc: int = _integer("DRAW_MINUTE_UTC", 0, 0, 59)
     draw_second_utc: int = _integer("DRAW_SECOND_UTC", 0, 0, 59)
+    draw_trigger_window_seconds: int = _integer("DRAW_TRIGGER_WINDOW_SECONDS", 60, 1, 300)
     payout_bps: int = _integer("PAYOUT_BPS", 9000, 1, 10_000)
     lottery_enabled: bool = _boolean("LOTTERY_ENABLED")
 

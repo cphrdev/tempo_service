@@ -8,7 +8,9 @@ services:
     expose:
       - "8000"
     volumes:
-      - lottery-data:/app/data
+      - type: bind
+        source: ./data
+        target: /app/data
       - type: bind
         source: ./logs
         target: /app/logs
@@ -19,7 +21,9 @@ services:
     command: ["python", "-m", "app.scheduler"]
     env_file: .env
     volumes:
-      - lottery-data:/app/data
+      - type: bind
+        source: ./data
+        target: /app/data
       - type: bind
         source: ./logs
         target: /app/logs
@@ -72,6 +76,5 @@ services:
           create_host_path: false
 
 volumes:
-  lottery-data:
   certbot-webroot:
   certbot-conf:

@@ -211,3 +211,10 @@ class LotteryStore:
                 "SELECT * FROM draws ORDER BY period_end DESC LIMIT ?", (limit,)
             ).fetchall()
         return [Draw(**dict(row)) for row in rows]
+
+    def latest_failed_draw(self) -> Draw | None:
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT * FROM draws WHERE status = 'failed' ORDER BY period_end DESC LIMIT 1"
+            ).fetchone()
+        return Draw(**dict(row)) if row else None

@@ -17,6 +17,34 @@ from app.store import LotteryStore
 logger = logging.getLogger(__name__)
 
 
+async def retry_latest_failed_payout() -> dict:
+    """Retry the newest failed payout without selecting a different winner."""
+    store = LotteryStore(settings.database_path)
+    draw = store.latest_failed_draw()
+    if draw is None:
+        return {"action": "skipped", "reason": "no failed payout"}
+    if not draw.winner:
+        raise RuntimeError("failed draw has no winner")
+    if settings.payment_destination == ZERO_ADDRESS:
+        raise RuntimeError("PAYMENT_DESTINATION is not configured")
+
+    try:
+        payout_tx = await asyncio.to_thread(
+            send_payout,
+            rpc_url=settings.rpc_url,
+            expected_sender=settings.payment_destination,
+            winner=draw.winner,
+            amount=draw.payout_amount,
+        )
+    except Exception as exc:
+        logger.exception("payout retry failed period_end=%s winner=%s", draw.period_end, draw.winner)
+        failed = store.mark_failed(draw.period_end, str(exc))
+        return {"action": "failed", "retry": True, "draw": failed.as_dict()}
+
+    paid = store.mark_paid(draw.period_end, payout_tx)
+    return {"action": "paid", "retry": True, "draw": paid.as_dict()}
+
+
 async def run_draw(now: int | None = None, *, dry_run: bool = False) -> dict:
     if not settings.lottery_enabled and not dry_run:
         return {"action": "skipped", "reason": "lottery is not enabled"}
@@ -77,7 +105,6 @@ async def run_draw(now: int | None = None, *, dry_run: bool = False) -> dict:
         return {"action": "skipped", "reason": "draw claimed by another worker", "draw": draw.as_dict()}
 
     try:
-        logger.info("payout started period_end=%s winner=%s amount=%s tickets=%s", period_end, winner_ticket.payer, payout, len(tickets))
         payout_tx = await asyncio.to_thread(
             send_payout,
             rpc_url=settings.rpc_url,
@@ -91,7 +118,6 @@ async def run_draw(now: int | None = None, *, dry_run: bool = False) -> dict:
         return {"action": "failed", "draw": failed.as_dict()}
 
     paid = store.mark_paid(period_end, payout_tx)
-    logger.info("payout confirmed period_end=%s payout_tx=%s", period_end, payout_tx)
     return {"action": "paid", "draw": paid.as_dict()}
 
 

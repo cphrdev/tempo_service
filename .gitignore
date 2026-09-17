@@ -5,7 +5,8 @@
 __pycache__/
 .pytest_cache/
 *.pyc
-data/
+data/*
+!data/.gitkeep
 logs/*
 !logs/.gitkeep
 nginx/certs/*.pem

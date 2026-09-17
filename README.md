@@ -179,6 +179,10 @@ The named Docker volume `lottery-data` stores the ticket/draw database. Back it
 up regularly; losing it loses the ticket ledger. Scheduler logs are retained in
 `./logs/lottery.log` on the host and rotate daily (30 backups). Run exactly one scheduler.
 
+The database is bind-mounted at `./data/lottery.db`, so it persists when
+containers are recreated. Do not run `docker compose down -v` to migrate the
+old named volume: copy its existing `lottery.db` into `./data/` first.
+
 Before enabling public access:
 
 1. Obtain legal approval and implement required jurisdiction/age restrictions.
