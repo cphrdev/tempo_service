@@ -6,7 +6,7 @@ import os
 
 from eth_account import Account
 from pytempo import TempoTransaction
-from pytempo.contracts import Nonce, TIP20
+from pytempo.contracts import TIP20
 from web3 import Web3
 
 from app.config import CHAIN_ID, USDC_E
@@ -27,7 +27,10 @@ def send_payout(*, rpc_url: str, expected_sender: str, winner: str, amount: int)
     if w3.eth.chain_id != CHAIN_ID:
         raise RuntimeError(f"RPC returned chain {w3.eth.chain_id}, expected {CHAIN_ID}")
 
-    nonce = Nonce.get_nonce(w3, account=account.address, nonce_key=0)
+    # nonce_key=0 is Tempo's standard protocol nonce. The Nonce precompile is
+    # only for parallel lanes (nonce_key >= 1), and rejects protocol nonce
+    # queries with ProtocolNonceNotSupported.
+    nonce = w3.eth.get_transaction_count(account.address, "pending")
     gas_price = int(w3.eth.gas_price)
     transaction = TempoTransaction.create(
         chain_id=CHAIN_ID,
